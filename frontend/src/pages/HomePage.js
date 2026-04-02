@@ -1,0 +1,738 @@
+import React, { useState, useRef } from "react";
+import { motion } from "framer-motion";
+import {
+  FileText,
+  Image as ImageIcon,
+  Video,
+  CheckCircle,
+  XCircle,
+  AlertCircle,
+  Upload,
+  Loader2,
+  Shield,
+  Zap,
+  Target,
+} from "lucide-react";
+import axios from "axios";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Progress } from "@/components/ui/progress";
+import { toast } from "sonner";
+
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const API = `${BACKEND_URL}/api`;
+
+const HomePage = () => {
+  const [activeTab, setActiveTab] = useState("text");
+  const [textInput, setTextInput] = useState("");
+  const [imageFile, setImageFile] = useState(null);
+  const [videoFile, setVideoFile] = useState(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [result, setResult] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
+  const [videoPreview, setVideoPreview] = useState(null);
+
+  const imageInputRef = useRef(null);
+  const videoInputRef = useRef(null);
+
+  const handleTextAnalysis = async () => {
+    if (!textInput.trim()) {
+      toast.error("Please enter some text to analyze");
+      return;
+    }
+
+    setIsAnalyzing(true);
+    setResult(null);
+
+    try {
+      const response = await axios.post(`${API}/detect-text`, {
+        text: textInput,
+      });
+      setResult(response.data);
+      toast.success("Analysis complete!");
+    } catch (error) {
+      console.error("Text analysis error:", error);
+      toast.error("Analysis failed. Please try again.");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleImageUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setImageFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImagePreview(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleImageAnalysis = async () => {
+    if (!imageFile) {
+      toast.error("Please upload an image first");
+      return;
+    }
+
+    setIsAnalyzing(true);
+    setResult(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", imageFile);
+
+      const response = await axios.post(`${API}/detect-image`, formData, {
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+      });
+      setResult(response.data);
+      toast.success("Image analysis complete!");
+    } catch (error) {
+      console.error("Image analysis error:", error);
+      toast.error("Image analysis failed. Please try again.");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleVideoUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setVideoFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setVideoPreview(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleVideoAnalysis = async () => {
+    if (!videoFile) {
+      toast.error("Please upload a video first");
+      return;
+    }
+
+    setIsAnalyzing(true);
+    setResult(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", videoFile);
+
+      const response = await axios.post(`${API}/detect-video`, formData, {
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+      });
+      setResult(response.data);
+      toast.success("Video analysis complete!");
+    } catch (error) {
+      console.error("Video analysis error:", error);
+      toast.error("Video analysis failed. Please try again.");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const scrollToDetection = () => {
+    document.getElementById("detection-section")?.scrollIntoView({
+      behavior: "smooth",
+    });
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50/80 via-white to-indigo-50/80">
+      {/* Header */}
+      <header
+        className="sticky top-0 z-50 bg-white/70 backdrop-blur-xl border-b border-white/60 shadow-sm"
+        data-testid="header"
+      >
+        <div className="max-w-7xl mx-auto px-6 sm:px-8 lg:px-12 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Shield className="w-8 h-8 text-blue-600" />
+              <h1
+                className="text-2xl font-serif font-bold text-slate-900"
+                data-testid="logo"
+              >
+                TruthLens AI
+              </h1>
+            </div>
+            <nav className="hidden md:flex items-center gap-8">
+              <a
+                href="#home"
+                className="text-slate-600 hover:text-blue-600 font-medium transition-colors"
+                data-testid="nav-home"
+              >
+                Home
+              </a>
+              <a
+                href="#detection-section"
+                className="text-slate-600 hover:text-blue-600 font-medium transition-colors"
+                data-testid="nav-detect"
+              >
+                Detect
+              </a>
+              <a
+                href="#how-it-works"
+                className="text-slate-600 hover:text-blue-600 font-medium transition-colors"
+                data-testid="nav-how"
+              >
+                How It Works
+              </a>
+            </nav>
+            <Button
+              onClick={scrollToDetection}
+              className="bg-blue-600 hover:bg-blue-700 text-white rounded-full px-6 shadow-lg"
+              data-testid="header-cta-button"
+            >
+              Verify Now
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      {/* Hero Section */}
+      <section id="home" className="py-24 sm:py-32" data-testid="hero-section">
+        <div className="max-w-7xl mx-auto px-6 sm:px-8 lg:px-12 text-center">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6 }}
+          >
+            <h1
+              className="text-5xl sm:text-6xl tracking-tighter font-serif text-slate-900 leading-tight mb-6"
+              data-testid="hero-title"
+            >
+              AI-Powered{" "}
+              <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+                Fake News Detector
+              </span>
+            </h1>
+            <p
+              className="text-xl text-slate-600 max-w-3xl mx-auto mb-8 leading-relaxed"
+              data-testid="hero-subtitle"
+            >
+              Verify the authenticity of news articles, images, and videos using
+              cutting-edge AI technology. Get instant analysis with confidence
+              scores and detailed explanations.
+            </p>
+            <Button
+              onClick={scrollToDetection}
+              size="lg"
+              className="bg-blue-600 hover:bg-blue-700 text-white rounded-full px-8 py-6 text-lg shadow-lg hover:shadow-xl transition-all"
+              data-testid="hero-cta-button"
+            >
+              Start Verification
+            </Button>
+          </motion.div>
+        </div>
+      </section>
+
+      {/* Detection Section */}
+      <section
+        id="detection-section"
+        className="py-24 bg-white/30"
+        data-testid="detection-section"
+      >
+        <div className="max-w-7xl mx-auto px-6 sm:px-8 lg:px-12">
+          <div className="text-center mb-12">
+            <h2
+              className="text-3xl sm:text-4xl tracking-tight font-serif text-slate-900 mb-4"
+              data-testid="detection-title"
+            >
+              Choose Detection Method
+            </h2>
+            <p className="text-slate-600" data-testid="detection-subtitle">
+              Select the type of content you want to verify
+            </p>
+          </div>
+
+          {/* Tab Selection */}
+          <div
+            className="flex justify-center gap-4 mb-8"
+            data-testid="detection-tabs"
+          >
+            <Button
+              onClick={() => {
+                setActiveTab("text");
+                setResult(null);
+              }}
+              variant={activeTab === "text" ? "default" : "outline"}
+              className={`rounded-xl px-6 py-3 ${
+                activeTab === "text"
+                  ? "bg-blue-600 text-white"
+                  : "bg-white/70 text-slate-700 hover:bg-white"
+              }`}
+              data-testid="tab-text"
+            >
+              <FileText className="w-5 h-5 mr-2" />
+              Text
+            </Button>
+            <Button
+              onClick={() => {
+                setActiveTab("image");
+                setResult(null);
+              }}
+              variant={activeTab === "image" ? "default" : "outline"}
+              className={`rounded-xl px-6 py-3 ${
+                activeTab === "image"
+                  ? "bg-blue-600 text-white"
+                  : "bg-white/70 text-slate-700 hover:bg-white"
+              }`}
+              data-testid="tab-image"
+            >
+              <ImageIcon className="w-5 h-5 mr-2" />
+              Image
+            </Button>
+            <Button
+              onClick={() => {
+                setActiveTab("video");
+                setResult(null);
+              }}
+              variant={activeTab === "video" ? "default" : "outline"}
+              className={`rounded-xl px-6 py-3 ${
+                activeTab === "video"
+                  ? "bg-blue-600 text-white"
+                  : "bg-white/70 text-slate-700 hover:bg-white"
+              }`}
+              data-testid="tab-video"
+            >
+              <Video className="w-5 h-5 mr-2" />
+              Video
+            </Button>
+          </div>
+
+          {/* Detection Cards */}
+          <div className="max-w-4xl mx-auto">
+            {/* Text Detection */}
+            {activeTab === "text" && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-white/70 backdrop-blur-xl border border-white/60 shadow-[0_8px_32px_rgba(37,99,235,0.06)] rounded-2xl p-8"
+                data-testid="text-detection-card"
+              >
+                <h3 className="text-xl font-serif text-slate-800 mb-4">
+                  Text News Detection
+                </h3>
+                <Textarea
+                  value={textInput}
+                  onChange={(e) => setTextInput(e.target.value)}
+                  placeholder="Paste news article text here..."
+                  className="min-h-[200px] bg-white border border-blue-100 focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 rounded-xl mb-4"
+                  data-testid="text-input"
+                />
+                <Button
+                  onClick={handleTextAnalysis}
+                  disabled={isAnalyzing}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-xl py-6 text-lg"
+                  data-testid="text-analyze-button"
+                >
+                  {isAnalyzing ? (
+                    <>
+                      <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                      Analyzing...
+                    </>
+                  ) : (
+                    "Analyze Text"
+                  )}
+                </Button>
+              </motion.div>
+            )}
+
+            {/* Image Detection */}
+            {activeTab === "image" && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-white/70 backdrop-blur-xl border border-white/60 shadow-[0_8px_32px_rgba(37,99,235,0.06)] rounded-2xl p-8"
+                data-testid="image-detection-card"
+              >
+                <h3 className="text-xl font-serif text-slate-800 mb-4">
+                  Image Deepfake Detection
+                </h3>
+                <div
+                  onClick={() => imageInputRef.current?.click()}
+                  className="border-2 border-dashed border-blue-200 bg-blue-50/50 hover:bg-blue-50 transition-colors rounded-xl p-8 flex flex-col items-center justify-center text-center cursor-pointer mb-4 min-h-[200px]"
+                  data-testid="image-upload-area"
+                >
+                  {imagePreview ? (
+                    <img
+                      src={imagePreview}
+                      alt="Preview"
+                      className="max-h-64 rounded-lg"
+                    />
+                  ) : (
+                    <>
+                      <Upload className="w-12 h-12 text-blue-600 mb-4" />
+                      <p className="text-slate-600">
+                        Click to upload or drag and drop
+                      </p>
+                      <p className="text-sm text-slate-500 mt-2">
+                        PNG, JPG up to 10MB
+                      </p>
+                    </>
+                  )}
+                </div>
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageUpload}
+                  className="hidden"
+                  data-testid="image-file-input"
+                />
+                <Button
+                  onClick={handleImageAnalysis}
+                  disabled={isAnalyzing || !imageFile}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-xl py-6 text-lg"
+                  data-testid="image-analyze-button"
+                >
+                  {isAnalyzing ? (
+                    <>
+                      <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                      Analyzing...
+                    </>
+                  ) : (
+                    "Analyze Image"
+                  )}
+                </Button>
+              </motion.div>
+            )}
+
+            {/* Video Detection */}
+            {activeTab === "video" && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-white/70 backdrop-blur-xl border border-white/60 shadow-[0_8px_32px_rgba(37,99,235,0.06)] rounded-2xl p-8"
+                data-testid="video-detection-card"
+              >
+                <h3 className="text-xl font-serif text-slate-800 mb-4">
+                  Video Deepfake Detection
+                </h3>
+                <div
+                  onClick={() => videoInputRef.current?.click()}
+                  className="border-2 border-dashed border-blue-200 bg-blue-50/50 hover:bg-blue-50 transition-colors rounded-xl p-8 flex flex-col items-center justify-center text-center cursor-pointer mb-4 min-h-[200px]"
+                  data-testid="video-upload-area"
+                >
+                  {videoPreview ? (
+                    <video
+                      src={videoPreview}
+                      controls
+                      className="max-h-64 rounded-lg"
+                    />
+                  ) : (
+                    <>
+                      <Upload className="w-12 h-12 text-blue-600 mb-4" />
+                      <p className="text-slate-600">
+                        Click to upload or drag and drop
+                      </p>
+                      <p className="text-sm text-slate-500 mt-2">
+                        MP4, MOV up to 50MB
+                      </p>
+                    </>
+                  )}
+                </div>
+                <input
+                  ref={videoInputRef}
+                  type="file"
+                  accept="video/*"
+                  onChange={handleVideoUpload}
+                  className="hidden"
+                  data-testid="video-file-input"
+                />
+                <Button
+                  onClick={handleVideoAnalysis}
+                  disabled={isAnalyzing || !videoFile}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-xl py-6 text-lg"
+                  data-testid="video-analyze-button"
+                >
+                  {isAnalyzing ? (
+                    <>
+                      <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                      Analyzing...
+                    </>
+                  ) : (
+                    "Analyze Video"
+                  )}
+                </Button>
+              </motion.div>
+            )}
+          </div>
+
+          {/* Result Display */}
+          {result && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="max-w-4xl mx-auto mt-8 bg-white/70 backdrop-blur-xl border-2 border-white/60 shadow-[0_8px_32px_rgba(37,99,235,0.08)] rounded-2xl p-8"
+              data-testid="result-card"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-2xl font-serif text-slate-900">
+                  Analysis Result
+                </h3>
+                {result.status === "REAL" && (
+                  <div
+                    className="flex items-center gap-2 bg-emerald-100 text-emerald-800 border border-emerald-200 px-4 py-2 rounded-full"
+                    data-testid="result-badge-real"
+                  >
+                    <CheckCircle className="w-5 h-5" />
+                    <span className="font-semibold">REAL</span>
+                  </div>
+                )}
+                {result.status === "FAKE" && (
+                  <div
+                    className="flex items-center gap-2 bg-red-100 text-red-800 border border-red-200 px-4 py-2 rounded-full"
+                    data-testid="result-badge-fake"
+                  >
+                    <XCircle className="w-5 h-5" />
+                    <span className="font-semibold">FAKE</span>
+                  </div>
+                )}
+                {result.status === "UNCERTAIN" && (
+                  <div
+                    className="flex items-center gap-2 bg-yellow-100 text-yellow-800 border border-yellow-200 px-4 py-2 rounded-full"
+                    data-testid="result-badge-uncertain"
+                  >
+                    <AlertCircle className="w-5 h-5" />
+                    <span className="font-semibold">UNCERTAIN</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Confidence Score */}
+              <div className="mb-6">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-slate-600 font-medium">
+                    Confidence Score
+                  </span>
+                  <span
+                    className="text-3xl font-bold text-blue-600"
+                    data-testid="confidence-score"
+                  >
+                    {Math.round(result.confidence)}%
+                  </span>
+                </div>
+                <Progress
+                  value={result.confidence}
+                  className="h-3"
+                  data-testid="confidence-progress"
+                />
+              </div>
+
+              {/* Explanation */}
+              <div
+                className="border-l-4 border-blue-500 bg-blue-50/80 p-6 rounded-r-xl mb-6"
+                data-testid="explanation-box"
+              >
+                <h4 className="font-semibold text-slate-900 mb-2">
+                  Explanation
+                </h4>
+                <p className="text-slate-700 leading-relaxed">
+                  {result.explanation}
+                </p>
+              </div>
+
+              {/* Suspicious Keywords */}
+              {result.suspicious_keywords &&
+                result.suspicious_keywords.length > 0 && (
+                  <div className="mb-6" data-testid="suspicious-keywords">
+                    <h4 className="font-semibold text-slate-900 mb-3">
+                      Key Indicators
+                    </h4>
+                    <div className="flex flex-wrap gap-2">
+                      {result.suspicious_keywords.map((keyword, index) => (
+                        <span
+                          key={index}
+                          className="bg-slate-100 text-slate-700 px-3 py-1 rounded-full text-sm"
+                        >
+                          {keyword}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+              {/* Sources */}
+              {result.sources && result.sources.length > 0 && (
+                <div data-testid="sources-section">
+                  <h4 className="font-semibold text-slate-900 mb-3">
+                    Additional Context
+                  </h4>
+                  <ul className="space-y-2">
+                    {result.sources.map((source, index) => (
+                      <li key={index} className="text-slate-700 text-sm">
+                        • {source}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </motion.div>
+          )}
+        </div>
+      </section>
+
+      {/* How It Works Section */}
+      <section
+        id="how-it-works"
+        className="py-24 bg-white"
+        data-testid="how-it-works-section"
+      >
+        <div className="max-w-7xl mx-auto px-6 sm:px-8 lg:px-12">
+          <div className="text-center mb-16">
+            <h2
+              className="text-3xl sm:text-4xl tracking-tight font-serif text-slate-900 mb-4"
+              data-testid="how-it-works-title"
+            >
+              How It Works
+            </h2>
+            <p className="text-slate-600" data-testid="how-it-works-subtitle">
+              Our AI-powered detection process in three simple steps
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div
+              className="text-center"
+              data-testid="how-it-works-step-1"
+            >
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-100 text-blue-600 rounded-full mb-4">
+                <Upload className="w-8 h-8" />
+              </div>
+              <h3 className="text-xl font-serif text-slate-900 mb-2">
+                1. Upload Content
+              </h3>
+              <p className="text-slate-600">
+                Submit text, images, or videos you want to verify for
+                authenticity.
+              </p>
+            </div>
+
+            <div
+              className="text-center"
+              data-testid="how-it-works-step-2"
+            >
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-100 text-blue-600 rounded-full mb-4">
+                <Zap className="w-8 h-8" />
+              </div>
+              <h3 className="text-xl font-serif text-slate-900 mb-2">
+                2. AI Analysis
+              </h3>
+              <p className="text-slate-600">
+                Our advanced AI models analyze content for manipulation,
+                inconsistencies, and authenticity markers.
+              </p>
+            </div>
+
+            <div
+              className="text-center"
+              data-testid="how-it-works-step-3"
+            >
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-100 text-blue-600 rounded-full mb-4">
+                <Target className="w-8 h-8" />
+              </div>
+              <h3 className="text-xl font-serif text-slate-900 mb-2">
+                3. Get Results
+              </h3>
+              <p className="text-slate-600">
+                Receive detailed analysis with confidence scores, explanations,
+                and key indicators.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Why Trust Us Section */}
+      <section className="py-24 bg-gradient-to-br from-blue-50/80 via-white to-indigo-50/80">
+        <div className="max-w-7xl mx-auto px-6 sm:px-8 lg:px-12 text-center">
+          <h2
+            className="text-3xl sm:text-4xl tracking-tight font-serif text-slate-900 mb-6"
+            data-testid="why-trust-title"
+          >
+            Why Trust TruthLens AI?
+          </h2>
+          <p
+            className="text-slate-600 max-w-3xl mx-auto mb-12"
+            data-testid="why-trust-subtitle"
+          >
+            Our platform uses state-of-the-art AI models trained on millions of
+            data points to provide accurate, reliable fake news detection.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div className="bg-white/70 backdrop-blur-xl border border-white/60 shadow-[0_8px_32px_rgba(37,99,235,0.06)] rounded-2xl p-6">
+              <Shield className="w-12 h-12 text-blue-600 mx-auto mb-4" />
+              <h3 className="text-xl font-serif text-slate-900 mb-2">
+                Advanced AI Models
+              </h3>
+              <p className="text-slate-600">
+                Powered by GPT-5.2 and cutting-edge computer vision technology.
+              </p>
+            </div>
+            <div className="bg-white/70 backdrop-blur-xl border border-white/60 shadow-[0_8px_32px_rgba(37,99,235,0.06)] rounded-2xl p-6">
+              <Zap className="w-12 h-12 text-blue-600 mx-auto mb-4" />
+              <h3 className="text-xl font-serif text-slate-900 mb-2">
+                Real-Time Analysis
+              </h3>
+              <p className="text-slate-600">
+                Get instant results with detailed explanations and confidence
+                scores.
+              </p>
+            </div>
+            <div className="bg-white/70 backdrop-blur-xl border border-white/60 shadow-[0_8px_32px_rgba(37,99,235,0.06)] rounded-2xl p-6">
+              <Target className="w-12 h-12 text-blue-600 mx-auto mb-4" />
+              <h3 className="text-xl font-serif text-slate-900 mb-2">
+                Multi-Format Support
+              </h3>
+              <p className="text-slate-600">
+                Analyze text, images, and videos all in one platform.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer
+        className="py-20 bg-slate-50"
+        data-testid="footer"
+      >
+        <div className="max-w-7xl mx-auto px-6 sm:px-8 lg:px-12 text-center">
+          <div className="flex items-center justify-center gap-3 mb-6">
+            <Shield className="w-8 h-8 text-blue-600" />
+            <h3 className="text-2xl font-serif font-bold text-slate-900">
+              TruthLens AI
+            </h3>
+          </div>
+          <p className="text-slate-600 mb-8">
+            Empowering truth in the digital age with AI-powered verification.
+          </p>
+          <div className="flex justify-center gap-8 text-slate-600">
+            <a href="#" className="hover:text-blue-600 transition-colors">
+              Privacy Policy
+            </a>
+            <a href="#" className="hover:text-blue-600 transition-colors">
+              Terms of Service
+            </a>
+            <a href="#" className="hover:text-blue-600 transition-colors">
+              Contact
+            </a>
+          </div>
+          <p className="text-slate-500 text-sm mt-8">
+            © 2026 TruthLens AI. All rights reserved.
+          </p>
+        </div>
+      </footer>
+    </div>
+  );
+};
+
+export default HomePage;
