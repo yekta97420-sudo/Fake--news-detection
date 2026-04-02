@@ -259,47 +259,99 @@ async def detect_image(file: UploadFile = File(...)):
 @api_router.post("/detect-video")
 async def detect_video(file: UploadFile = File(...)):
     """Detect deepfakes in videos using frame-by-frame analysis"""
+    temp_path = None
     try:
         logger.info(f"Analyzing video: {file.filename}")
+        
+        # Validate file extension
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="Invalid file: No filename provided")
+        
+        valid_extensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm']
+        file_ext = os.path.splitext(file.filename.lower())[1]
+        if file_ext not in valid_extensions:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Unsupported video format. Please upload one of: {', '.join(valid_extensions)}"
+            )
         
         # Read video file
         contents = await file.read()
         
+        if len(contents) == 0:
+            raise HTTPException(status_code=400, detail="Empty file uploaded")
+        
+        # Check file size (max 100MB)
+        max_size = 100 * 1024 * 1024
+        if len(contents) > max_size:
+            raise HTTPException(status_code=400, detail="Video file too large. Maximum size is 100MB")
+        
         # Save temporarily
-        temp_path = f"/tmp/{uuid.uuid4()}.mp4"
+        temp_path = f"/tmp/{uuid.uuid4()}{file_ext}"
         with open(temp_path, "wb") as f:
             f.write(contents)
         
         # Extract frames
         cap = cv2.VideoCapture(temp_path)
+        
+        # Check if video opened successfully
+        if not cap.isOpened():
+            raise HTTPException(
+                status_code=400, 
+                detail="Unable to open video file. Please ensure it's a valid video format"
+            )
+        
         frames_to_analyze = []
         frame_count = 0
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
-        # Sample 5 frames evenly distributed
-        sample_indices = np.linspace(0, total_frames - 1, min(5, total_frames), dtype=int)
-        
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
-            
-            if frame_count in sample_indices:
+        # If total_frames is 0 or invalid, try reading frames anyway
+        if total_frames <= 0:
+            logger.warning("Could not get frame count, attempting sequential read")
+            # Read up to 5 frames
+            max_frames = 5
+            while len(frames_to_analyze) < max_frames:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
                 # Convert frame to base64
                 _, buffer = cv2.imencode('.jpg', frame)
                 frame_base64 = base64.b64encode(buffer).decode('utf-8')
                 frames_to_analyze.append(frame_base64)
+        else:
+            # Sample 5 frames evenly distributed
+            sample_indices = np.linspace(0, total_frames - 1, min(5, total_frames), dtype=int)
             
-            frame_count += 1
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
+                if frame_count in sample_indices:
+                    # Convert frame to base64
+                    _, buffer = cv2.imencode('.jpg', frame)
+                    frame_base64 = base64.b64encode(buffer).decode('utf-8')
+                    frames_to_analyze.append(frame_base64)
+                
+                frame_count += 1
         
         cap.release()
-        os.remove(temp_path)
         
         if not frames_to_analyze:
-            raise HTTPException(status_code=400, detail="No frames could be extracted from video")
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
+            raise HTTPException(
+                status_code=400, 
+                detail="No frames could be extracted from video. The video may be corrupted or in an unsupported format"
+            )
         
         # Analyze first frame (can be extended to analyze multiple frames)
         result = await analyze_image_with_vision(frames_to_analyze[0])
+        
+        # Clean up temp file
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
         
         return {
             "status": result.get("status", "UNKNOWN"),
@@ -311,9 +363,19 @@ async def detect_video(file: UploadFile = File(...)):
             "frames_analyzed": len(frames_to_analyze)
         }
     
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise
     except Exception as e:
         logger.error(f"Video detection error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Video analysis failed: {str(e)}. Please try a different video file"
+        )
 
 @api_router.post("/verify-claim")
 async def verify_claim(request: VerificationRequest):
