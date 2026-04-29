@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import {
@@ -22,6 +22,8 @@ import {
   Globe,
   Search,
   Sparkles,
+  History,
+  ChevronRight,
 } from "lucide-react";
 import axios from "axios";
 import { Button } from "@/components/ui/button";
@@ -56,10 +58,27 @@ const HomePage = () => {
   const [batchProgress, setBatchProgress] = useState("");
   const [verifyMode, setVerifyMode] = useState(false);
 
+  // Recent Searches
+  const [recentSearches, setRecentSearches] = useState([]);
+  const [showRecent, setShowRecent] = useState(true);
+
   const imageInputRef = useRef(null);
   const videoInputRef = useRef(null);
   const batchImageInputRef = useRef(null);
   const batchVideoInputRef = useRef(null);
+
+  const fetchRecentSearches = useCallback(async () => {
+    try {
+      const response = await axios.get(`${API}/history`, { params: { limit: 5 } });
+      setRecentSearches(response.data.items || []);
+    } catch (e) {
+      // Silently fail - non-critical
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchRecentSearches();
+  }, [fetchRecentSearches]);
 
   // New Search / Reset
   const handleNewSearch = () => {
@@ -72,6 +91,7 @@ const HomePage = () => {
     setVideoPreview(null);
     setBatchFiles([]);
     setBatchProgress("");
+    fetchRecentSearches();
     document.getElementById("detection-section")?.scrollIntoView({ behavior: "smooth" });
   };
 
@@ -89,6 +109,7 @@ const HomePage = () => {
       const response = await axios.post(endpoint, payload);
       setResult(response.data);
       toast.success("Analysis complete!");
+      fetchRecentSearches();
     } catch (error) {
       toast.error(error.response?.data?.detail || "Analysis failed. Please try again.");
     } finally {
@@ -117,6 +138,7 @@ const HomePage = () => {
       const response = await axios.post(`${API}/detect-image`, formData, { headers: { "Content-Type": "multipart/form-data" } });
       setResult(response.data);
       toast.success("Image analysis complete!");
+      fetchRecentSearches();
     } catch (error) {
       toast.error(error.response?.data?.detail || "Image analysis failed.");
     } finally {
@@ -145,6 +167,7 @@ const HomePage = () => {
       const response = await axios.post(`${API}/detect-video`, formData, { headers: { "Content-Type": "multipart/form-data" } });
       setResult(response.data);
       toast.success("Video analysis complete!");
+      fetchRecentSearches();
     } catch (error) {
       toast.error(error.response?.data?.detail || "Video analysis failed.");
     } finally {
@@ -167,6 +190,7 @@ const HomePage = () => {
       const response = await axios.post(endpoint, formData, { headers: { "Content-Type": "multipart/form-data" } });
       setBatchResults(response.data);
       toast.success(`Batch complete! ${response.data.successful}/${response.data.total_files} analyzed.`);
+      fetchRecentSearches();
     } catch (error) {
       toast.error(error.response?.data?.detail || "Batch analysis failed.");
     } finally {
@@ -681,6 +705,84 @@ const HomePage = () => {
                 </Button>
               </div>
             </div>
+          )}
+
+          {/* Recent Searches Widget */}
+          {recentSearches.length > 0 && !result && !batchResults && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3 }}
+              className="max-w-3xl mx-auto mt-10"
+              data-testid="recent-searches-widget"
+            >
+              <div className="bg-white border border-slate-200/80 shadow-sm rounded-2xl overflow-hidden">
+                <button
+                  onClick={() => setShowRecent(!showRecent)}
+                  className="w-full flex items-center justify-between px-6 py-4 hover:bg-slate-50/50 transition-colors"
+                  data-testid="recent-searches-toggle"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <History className="w-4.5 h-4.5 text-blue-600" />
+                    <span className="text-sm font-semibold text-slate-800">Recent Searches</span>
+                    <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{recentSearches.length}</span>
+                  </div>
+                  <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${showRecent ? "rotate-90" : ""}`} />
+                </button>
+
+                <AnimatePresence>
+                  {showRecent && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="border-t border-slate-100 divide-y divide-slate-100">
+                        {recentSearches.map((item, index) => (
+                          <div
+                            key={item.id || index}
+                            className="px-6 py-3.5 flex items-center gap-4 hover:bg-slate-50/50 transition-colors"
+                            data-testid={`recent-item-${index}`}
+                          >
+                            <div className="flex-shrink-0">
+                              {item.type === "text" && <FileText className="w-4 h-4 text-blue-500" />}
+                              {item.type === "image" && <ImageIcon className="w-4 h-4 text-purple-500" />}
+                              {item.type === "video" && <Video className="w-4 h-4 text-pink-500" />}
+                              {item.type === "verification" && <Newspaper className="w-4 h-4 text-green-500" />}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm text-slate-700 truncate">{item.content_preview}</p>
+                              <p className="text-xs text-slate-400 mt-0.5">
+                                {new Date(item.timestamp).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              <span className={`text-xs font-bold ${item.status === "REAL" ? "text-emerald-600" : item.status === "FAKE" ? "text-red-600" : "text-amber-600"}`}>
+                                {Math.round(item.confidence)}%
+                              </span>
+                              {item.status === "REAL" && <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />}
+                              {item.status === "FAKE" && <XCircle className="w-3.5 h-3.5 text-red-500" />}
+                              {item.status === "UNCERTAIN" && <AlertCircle className="w-3.5 h-3.5 text-amber-500" />}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="border-t border-slate-100 px-6 py-3">
+                        <button
+                          onClick={() => navigate("/history")}
+                          className="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1 transition-colors"
+                          data-testid="view-all-history-link"
+                        >
+                          View all history <ChevronRight className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            </motion.div>
           )}
         </div>
       </section>
