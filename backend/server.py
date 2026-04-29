@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File
+from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File, Query
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime, timezone
 import base64
 import io
+import json
 from PIL import Image
 import cv2
 import numpy as np
@@ -38,16 +39,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Get API key
+# Get API keys
 EMERGENT_LLM_KEY = os.getenv('EMERGENT_LLM_KEY')
+NEWS_API_KEY = os.getenv('NEWS_API_KEY')
 
 # Define Models
 class TextDetectionRequest(BaseModel):
     text: str = Field(..., description="News text to analyze")
 
 class DetectionResult(BaseModel):
-    status: str  # "REAL" or "FAKE"
-    confidence: float  # 0-100
+    status: str
+    confidence: float
     explanation: str
     suspicious_keywords: List[str] = []
     sources: List[str] = []
@@ -56,7 +58,42 @@ class DetectionResult(BaseModel):
 class VerificationRequest(BaseModel):
     claim: str = Field(..., description="Claim to verify")
 
+class NewsApiKeyRequest(BaseModel):
+    api_key: str = Field(..., description="News API key to configure")
+
+class HistoryDeleteRequest(BaseModel):
+    ids: Optional[List[str]] = None
+
+# ============================================================
 # Helper functions
+# ============================================================
+
+def parse_llm_json(response_text: str) -> dict:
+    """Parse JSON from LLM response, handling markdown code blocks"""
+    text = response_text.strip()
+    if "```json" in text:
+        text = text.split("```json")[1].split("```")[0].strip()
+    elif "```" in text:
+        text = text.split("```")[1].split("```")[0].strip()
+    return json.loads(text)
+
+async def save_to_history(analysis_type: str, content_preview: str, result: dict, filename: str = None):
+    """Save analysis result to MongoDB history"""
+    doc = {
+        "id": str(uuid.uuid4()),
+        "type": analysis_type,
+        "content_preview": content_preview[:300],
+        "filename": filename,
+        "status": result.get("status", "UNKNOWN"),
+        "confidence": result.get("confidence", 0),
+        "explanation": result.get("explanation", ""),
+        "suspicious_keywords": result.get("suspicious_keywords", []),
+        "sources": result.get("sources", []),
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+    await db.analysis_history.insert_one(doc)
+    return doc["id"]
+
 async def analyze_text_with_llm(text: str) -> dict:
     """Analyze text using LLM for fake news detection"""
     try:
@@ -66,21 +103,21 @@ async def analyze_text_with_llm(text: str) -> dict:
             system_message="""You are an expert fake news detection AI. Analyze news articles and determine if they are REAL or FAKE.
             
 Provide your analysis in this exact JSON format:
-            {
-                "status": "REAL" or "FAKE",
-                "confidence": (number between 0-100),
-                "explanation": "detailed explanation of your reasoning",
-                "suspicious_keywords": ["list", "of", "suspicious", "words"],
-                "credibility_indicators": ["list of credibility factors found or missing"]
-            }
-            
+{
+    "status": "REAL" or "FAKE",
+    "confidence": (number between 0-100),
+    "explanation": "detailed explanation of your reasoning",
+    "suspicious_keywords": ["list", "of", "suspicious", "words"],
+    "credibility_indicators": ["list of credibility factors found or missing"]
+}
+
 Consider:
-            - Sensational or emotional language
-            - Lack of credible sources
-            - Logical inconsistencies
-            - Misleading headlines vs content
-            - Verifiable facts and dates
-            - Author credibility indicators"""
+- Sensational or emotional language
+- Lack of credible sources
+- Logical inconsistencies
+- Misleading headlines vs content
+- Verifiable facts and dates
+- Author credibility indicators"""
         ).with_model("openai", "gpt-5.2")
         
         user_message = UserMessage(
@@ -88,18 +125,7 @@ Consider:
         )
         
         response = await chat.send_message(user_message)
-        
-        # Parse JSON response
-        import json
-        # Extract JSON from response
-        response_text = response.strip()
-        if "```json" in response_text:
-            response_text = response_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in response_text:
-            response_text = response_text.split("```")[1].split("```")[0].strip()
-        
-        result = json.loads(response_text)
-        return result
+        return parse_llm_json(response)
     
     except Exception as e:
         logger.error(f"Error in text analysis: {str(e)}")
@@ -114,22 +140,22 @@ async def analyze_image_with_vision(image_base64: str) -> dict:
             system_message="""You are an expert deepfake and image manipulation detection AI. Analyze images for signs of manipulation, AI generation, or deepfakes.
             
 Provide your analysis in this exact JSON format:
-            {
-                "status": "REAL" or "FAKE",
-                "confidence": (number between 0-100),
-                "explanation": "detailed explanation of manipulation indicators found or authenticity indicators",
-                "manipulation_indicators": ["list of specific manipulation signs detected"],
-                "authenticity_indicators": ["list of authenticity markers found"]
-            }
-            
+{
+    "status": "REAL" or "FAKE",
+    "confidence": (number between 0-100),
+    "explanation": "detailed explanation of manipulation indicators found or authenticity indicators",
+    "manipulation_indicators": ["list of specific manipulation signs detected"],
+    "authenticity_indicators": ["list of authenticity markers found"]
+}
+
 Look for:
-            - Unnatural facial features or expressions
-            - Inconsistent lighting or shadows
-            - Blurred or distorted edges
-            - Artifacts from AI generation
-            - Inconsistent image quality across regions
-            - Anatomical impossibilities
-            - Background inconsistencies"""
+- Unnatural facial features or expressions
+- Inconsistent lighting or shadows
+- Blurred or distorted edges
+- Artifacts from AI generation
+- Inconsistent image quality across regions
+- Anatomical impossibilities
+- Background inconsistencies"""
         ).with_model("openai", "gpt-5.2")
         
         image_content = ImageContent(image_base64=image_base64)
@@ -140,17 +166,7 @@ Look for:
         )
         
         response = await chat.send_message(user_message)
-        
-        # Parse JSON response
-        import json
-        response_text = response.strip()
-        if "```json" in response_text:
-            response_text = response_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in response_text:
-            response_text = response_text.split("```")[1].split("```")[0].strip()
-        
-        result = json.loads(response_text)
-        return result
+        return parse_llm_json(response)
     
     except Exception as e:
         logger.error(f"Error in image analysis: {str(e)}")
@@ -165,20 +181,20 @@ async def verify_claim_with_llm(claim: str) -> dict:
             system_message="""You are a fact-checking AI with access to general world knowledge. Verify claims and provide evidence-based assessments.
             
 Provide your analysis in this exact JSON format:
-            {
-                "status": "VERIFIED" or "UNVERIFIED" or "PARTIALLY_VERIFIED",
-                "confidence": (number between 0-100),
-                "explanation": "detailed explanation with reasoning",
-                "supporting_facts": ["list of facts that support or contradict the claim"],
-                "related_context": "relevant context or background information"
-            }
-            
+{
+    "status": "VERIFIED" or "UNVERIFIED" or "PARTIALLY_VERIFIED",
+    "confidence": (number between 0-100),
+    "explanation": "detailed explanation with reasoning",
+    "supporting_facts": ["list of facts that support or contradict the claim"],
+    "related_context": "relevant context or background information"
+}
+
 Base your assessment on:
-            - Known historical facts
-            - Scientific consensus
-            - Publicly documented events
-            - Logical consistency
-            - Common knowledge verification"""
+- Known historical facts
+- Scientific consensus
+- Publicly documented events
+- Logical consistency
+- Common knowledge verification"""
         ).with_model("openai", "gpt-5.2")
         
         user_message = UserMessage(
@@ -186,28 +202,75 @@ Base your assessment on:
         )
         
         response = await chat.send_message(user_message)
-        
-        # Parse JSON response
-        import json
-        response_text = response.strip()
-        if "```json" in response_text:
-            response_text = response_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in response_text:
-            response_text = response_text.split("```")[1].split("```")[0].strip()
-        
-        result = json.loads(response_text)
-        return result
+        return parse_llm_json(response)
     
     except Exception as e:
         logger.error(f"Error in claim verification: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Verification failed: {str(e)}")
 
+async def verify_with_news_api(claim: str) -> dict:
+    """Verify a claim using News API for real-time news comparison"""
+    import requests
+    
+    if not NEWS_API_KEY:
+        return None
+    
+    try:
+        # Extract keywords from claim for search
+        search_query = claim[:100]
+        
+        response = requests.get(
+            "https://newsapi.org/v2/everything",
+            params={
+                "q": search_query,
+                "apiKey": NEWS_API_KEY,
+                "language": "en",
+                "sortBy": "relevancy",
+                "pageSize": 10
+            },
+            timeout=10
+        )
+        
+        if response.status_code != 200:
+            logger.warning(f"News API returned status {response.status_code}")
+            return None
+        
+        data = response.json()
+        
+        if data.get("status") != "ok" or not data.get("articles"):
+            return None
+        
+        articles = data["articles"]
+        matching_articles = []
+        
+        for article in articles[:5]:
+            matching_articles.append({
+                "title": article.get("title", ""),
+                "source": article.get("source", {}).get("name", "Unknown"),
+                "url": article.get("url", ""),
+                "published_at": article.get("publishedAt", ""),
+                "description": article.get("description", "")
+            })
+        
+        return {
+            "articles_found": len(articles),
+            "matching_articles": matching_articles,
+            "sources": list(set(a.get("source", {}).get("name", "") for a in articles[:5]))
+        }
+    
+    except Exception as e:
+        logger.error(f"News API error: {str(e)}")
+        return None
+
+# ============================================================
 # Routes
+# ============================================================
+
 @api_router.get("/")
 async def root():
     return {"message": "Fake News Detection API", "status": "operational"}
 
-@api_router.post("/detect-text", response_model=DetectionResult)
+@api_router.post("/detect-text")
 async def detect_text(request: TextDetectionRequest):
     """Detect fake news in text using AI"""
     try:
@@ -215,15 +278,22 @@ async def detect_text(request: TextDetectionRequest):
         
         result = await analyze_text_with_llm(request.text)
         
-        return DetectionResult(
-            status=result.get("status", "UNKNOWN"),
-            confidence=float(result.get("confidence", 50)),
-            explanation=result.get("explanation", "Analysis completed"),
-            suspicious_keywords=result.get("suspicious_keywords", []),
-            sources=result.get("credibility_indicators", []),
-            timestamp=datetime.now(timezone.utc).isoformat()
-        )
+        response_data = {
+            "status": result.get("status", "UNKNOWN"),
+            "confidence": float(result.get("confidence", 50)),
+            "explanation": result.get("explanation", "Analysis completed"),
+            "suspicious_keywords": result.get("suspicious_keywords", []),
+            "sources": result.get("credibility_indicators", []),
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
+        # Save to history
+        await save_to_history("text", request.text, response_data)
+        
+        return response_data
     
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Text detection error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -234,16 +304,12 @@ async def detect_image(file: UploadFile = File(...)):
     try:
         logger.info(f"Analyzing image: {file.filename}")
         
-        # Read image file
         contents = await file.read()
-        
-        # Convert to base64
         image_base64 = base64.b64encode(contents).decode('utf-8')
         
-        # Analyze with Vision API
         result = await analyze_image_with_vision(image_base64)
         
-        return {
+        response_data = {
             "status": result.get("status", "UNKNOWN"),
             "confidence": float(result.get("confidence", 50)),
             "explanation": result.get("explanation", "Analysis completed"),
@@ -251,7 +317,14 @@ async def detect_image(file: UploadFile = File(...)):
             "sources": result.get("authenticity_indicators", []),
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
+        
+        # Save to history
+        await save_to_history("image", f"Image: {file.filename}", response_data, filename=file.filename)
+        
+        return response_data
     
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Image detection error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -263,7 +336,6 @@ async def detect_video(file: UploadFile = File(...)):
     try:
         logger.info(f"Analyzing video: {file.filename}")
         
-        # Validate file extension
         if not file.filename:
             raise HTTPException(status_code=400, detail="Invalid file: No filename provided")
         
@@ -275,26 +347,21 @@ async def detect_video(file: UploadFile = File(...)):
                 detail=f"Unsupported video format. Please upload one of: {', '.join(valid_extensions)}"
             )
         
-        # Read video file
         contents = await file.read()
         
         if len(contents) == 0:
             raise HTTPException(status_code=400, detail="Empty file uploaded")
         
-        # Check file size (max 100MB)
         max_size = 100 * 1024 * 1024
         if len(contents) > max_size:
             raise HTTPException(status_code=400, detail="Video file too large. Maximum size is 100MB")
         
-        # Save temporarily
         temp_path = f"/tmp/{uuid.uuid4()}{file_ext}"
         with open(temp_path, "wb") as f:
             f.write(contents)
         
-        # Extract frames
         cap = cv2.VideoCapture(temp_path)
         
-        # Check if video opened successfully
         if not cap.isOpened():
             raise HTTPException(
                 status_code=400, 
@@ -305,35 +372,25 @@ async def detect_video(file: UploadFile = File(...)):
         frame_count = 0
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
-        # If total_frames is 0 or invalid, try reading frames anyway
         if total_frames <= 0:
-            logger.warning("Could not get frame count, attempting sequential read")
-            # Read up to 5 frames
             max_frames = 5
             while len(frames_to_analyze) < max_frames:
                 ret, frame = cap.read()
                 if not ret:
                     break
-                
-                # Convert frame to base64
                 _, buffer = cv2.imencode('.jpg', frame)
                 frame_base64 = base64.b64encode(buffer).decode('utf-8')
                 frames_to_analyze.append(frame_base64)
         else:
-            # Sample 5 frames evenly distributed
             sample_indices = np.linspace(0, total_frames - 1, min(5, total_frames), dtype=int)
-            
             while cap.isOpened():
                 ret, frame = cap.read()
                 if not ret:
                     break
-                
                 if frame_count in sample_indices:
-                    # Convert frame to base64
                     _, buffer = cv2.imencode('.jpg', frame)
                     frame_base64 = base64.b64encode(buffer).decode('utf-8')
                     frames_to_analyze.append(frame_base64)
-                
                 frame_count += 1
         
         cap.release()
@@ -346,14 +403,12 @@ async def detect_video(file: UploadFile = File(...)):
                 detail="No frames could be extracted from video. The video may be corrupted or in an unsupported format"
             )
         
-        # Analyze first frame (can be extended to analyze multiple frames)
         result = await analyze_image_with_vision(frames_to_analyze[0])
         
-        # Clean up temp file
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
         
-        return {
+        response_data = {
             "status": result.get("status", "UNKNOWN"),
             "confidence": float(result.get("confidence", 50)),
             "explanation": result.get("explanation", "Video analysis completed") + f" (Analyzed {len(frames_to_analyze)} frames)",
@@ -362,9 +417,13 @@ async def detect_video(file: UploadFile = File(...)):
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "frames_analyzed": len(frames_to_analyze)
         }
+        
+        # Save to history
+        await save_to_history("video", f"Video: {file.filename}", response_data, filename=file.filename)
+        
+        return response_data
     
     except HTTPException:
-        # Re-raise HTTP exceptions as-is
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
         raise
@@ -377,32 +436,268 @@ async def detect_video(file: UploadFile = File(...)):
             detail=f"Video analysis failed: {str(e)}. Please try a different video file"
         )
 
-@api_router.post("/verify-claim")
-async def verify_claim(request: VerificationRequest):
-    """Verify a claim using AI-based fact checking"""
+# ============================================================
+# News API Verification (Modular)
+# ============================================================
+
+@api_router.post("/verify-news")
+async def verify_news(request: VerificationRequest):
+    """Verify a claim using News API + AI verification"""
     try:
         logger.info(f"Verifying claim: {request.claim}")
         
-        result = await verify_claim_with_llm(request.claim)
+        # Try News API first if key is available
+        news_result = await verify_with_news_api(request.claim)
         
-        # Map VERIFIED/UNVERIFIED to REAL/FAKE for consistency
+        # Always do AI verification
+        ai_result = await verify_claim_with_llm(request.claim)
+        
         status_map = {
             "VERIFIED": "REAL",
             "PARTIALLY_VERIFIED": "UNCERTAIN",
             "UNVERIFIED": "FAKE"
         }
         
+        response_data = {
+            "status": status_map.get(ai_result.get("status", "UNVERIFIED"), "UNCERTAIN"),
+            "confidence": float(ai_result.get("confidence", 50)),
+            "explanation": ai_result.get("explanation", "Verification completed"),
+            "suspicious_keywords": ai_result.get("supporting_facts", []),
+            "sources": [ai_result.get("related_context", "")],
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "news_api_available": news_result is not None,
+            "matching_articles": news_result.get("matching_articles", []) if news_result else [],
+            "news_sources": news_result.get("sources", []) if news_result else []
+        }
+        
+        # Save to history
+        await save_to_history("verification", request.claim, response_data)
+        
+        return response_data
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"News verification error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/news-api-status")
+async def news_api_status():
+    """Check if News API key is configured"""
+    return {
+        "configured": NEWS_API_KEY is not None and len(NEWS_API_KEY) > 0,
+        "message": "News API is configured and active" if NEWS_API_KEY else "News API key not configured. Add NEWS_API_KEY to enable real-time news verification."
+    }
+
+@api_router.post("/configure-news-api")
+async def configure_news_api(request: NewsApiKeyRequest):
+    """Configure News API key at runtime"""
+    global NEWS_API_KEY
+    NEWS_API_KEY = request.api_key
+    logger.info("News API key configured at runtime")
+    return {"message": "News API key configured successfully", "configured": True}
+
+# ============================================================
+# History Tracking
+# ============================================================
+
+@api_router.get("/history")
+async def get_history(
+    type: Optional[str] = Query(None, description="Filter by type: text, image, video, verification"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0)
+):
+    """Get analysis history with optional filtering"""
+    try:
+        query = {}
+        if type:
+            query["type"] = type
+        
+        total = await db.analysis_history.count_documents(query)
+        
+        cursor = db.analysis_history.find(query, {"_id": 0}).sort("timestamp", -1).skip(offset).limit(limit)
+        history = await cursor.to_list(length=limit)
+        
         return {
-            "status": status_map.get(result.get("status", "UNVERIFIED"), "UNCERTAIN"),
-            "confidence": float(result.get("confidence", 50)),
-            "explanation": result.get("explanation", "Verification completed"),
-            "suspicious_keywords": result.get("supporting_facts", []),
-            "sources": [result.get("related_context", "")],
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "items": history
         }
     
     except Exception as e:
-        logger.error(f"Claim verification error: {str(e)}")
+        logger.error(f"History fetch error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.delete("/history")
+async def clear_history(request: Optional[HistoryDeleteRequest] = None):
+    """Clear analysis history. If ids provided, delete specific entries; otherwise clear all."""
+    try:
+        if request and request.ids:
+            result = await db.analysis_history.delete_many({"id": {"$in": request.ids}})
+            return {"message": f"Deleted {result.deleted_count} entries", "deleted_count": result.deleted_count}
+        else:
+            result = await db.analysis_history.delete_many({})
+            return {"message": f"Cleared all history ({result.deleted_count} entries)", "deleted_count": result.deleted_count}
+    
+    except Exception as e:
+        logger.error(f"History delete error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================
+# Batch Processing
+# ============================================================
+
+@api_router.post("/batch-detect-images")
+async def batch_detect_images(files: List[UploadFile] = File(...)):
+    """Batch process multiple images for deepfake detection"""
+    try:
+        if len(files) > 10:
+            raise HTTPException(status_code=400, detail="Maximum 10 files per batch")
+        
+        results = []
+        
+        for i, file in enumerate(files):
+            try:
+                logger.info(f"Batch processing image {i+1}/{len(files)}: {file.filename}")
+                
+                contents = await file.read()
+                image_base64 = base64.b64encode(contents).decode('utf-8')
+                
+                result = await analyze_image_with_vision(image_base64)
+                
+                file_result = {
+                    "filename": file.filename,
+                    "index": i,
+                    "status": result.get("status", "UNKNOWN"),
+                    "confidence": float(result.get("confidence", 50)),
+                    "explanation": result.get("explanation", "Analysis completed"),
+                    "suspicious_keywords": result.get("manipulation_indicators", []),
+                    "sources": result.get("authenticity_indicators", []),
+                    "success": True
+                }
+                
+                # Save to history
+                await save_to_history("image", f"Batch Image: {file.filename}", file_result, filename=file.filename)
+                
+            except Exception as e:
+                file_result = {
+                    "filename": file.filename,
+                    "index": i,
+                    "status": "ERROR",
+                    "confidence": 0,
+                    "explanation": f"Failed to analyze: {str(e)}",
+                    "suspicious_keywords": [],
+                    "sources": [],
+                    "success": False
+                }
+            
+            results.append(file_result)
+        
+        return {
+            "total_files": len(files),
+            "successful": sum(1 for r in results if r["success"]),
+            "failed": sum(1 for r in results if not r["success"]),
+            "results": results,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Batch image detection error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/batch-detect-videos")
+async def batch_detect_videos(files: List[UploadFile] = File(...)):
+    """Batch process multiple videos for deepfake detection"""
+    try:
+        if len(files) > 5:
+            raise HTTPException(status_code=400, detail="Maximum 5 videos per batch")
+        
+        results = []
+        
+        for i, file in enumerate(files):
+            temp_path = None
+            try:
+                logger.info(f"Batch processing video {i+1}/{len(files)}: {file.filename}")
+                
+                if not file.filename:
+                    raise ValueError("No filename provided")
+                
+                valid_extensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm']
+                file_ext = os.path.splitext(file.filename.lower())[1]
+                if file_ext not in valid_extensions:
+                    raise ValueError(f"Unsupported format: {file_ext}")
+                
+                contents = await file.read()
+                if len(contents) == 0:
+                    raise ValueError("Empty file")
+                
+                temp_path = f"/tmp/{uuid.uuid4()}{file_ext}"
+                with open(temp_path, "wb") as f:
+                    f.write(contents)
+                
+                cap = cv2.VideoCapture(temp_path)
+                if not cap.isOpened():
+                    raise ValueError("Unable to open video file")
+                
+                # Extract first frame
+                ret, frame = cap.read()
+                cap.release()
+                
+                if not ret:
+                    raise ValueError("Could not extract frame from video")
+                
+                _, buffer = cv2.imencode('.jpg', frame)
+                frame_base64 = base64.b64encode(buffer).decode('utf-8')
+                
+                result = await analyze_image_with_vision(frame_base64)
+                
+                if temp_path and os.path.exists(temp_path):
+                    os.remove(temp_path)
+                
+                file_result = {
+                    "filename": file.filename,
+                    "index": i,
+                    "status": result.get("status", "UNKNOWN"),
+                    "confidence": float(result.get("confidence", 50)),
+                    "explanation": result.get("explanation", "Video analysis completed"),
+                    "suspicious_keywords": result.get("manipulation_indicators", []),
+                    "sources": result.get("authenticity_indicators", []),
+                    "success": True
+                }
+                
+                await save_to_history("video", f"Batch Video: {file.filename}", file_result, filename=file.filename)
+                
+            except Exception as e:
+                if temp_path and os.path.exists(temp_path):
+                    os.remove(temp_path)
+                file_result = {
+                    "filename": file.filename,
+                    "index": i,
+                    "status": "ERROR",
+                    "confidence": 0,
+                    "explanation": f"Failed to analyze: {str(e)}",
+                    "suspicious_keywords": [],
+                    "sources": [],
+                    "success": False
+                }
+            
+            results.append(file_result)
+        
+        return {
+            "total_files": len(files),
+            "successful": sum(1 for r in results if r["success"]),
+            "failed": sum(1 for r in results if not r["success"]),
+            "results": results,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Batch video detection error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Include the router in the main app
