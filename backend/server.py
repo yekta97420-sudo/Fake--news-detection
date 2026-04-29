@@ -43,6 +43,9 @@ logger = logging.getLogger(__name__)
 EMERGENT_LLM_KEY = os.getenv('EMERGENT_LLM_KEY')
 NEWS_API_KEY = os.getenv('NEWS_API_KEY')
 
+# Supported languages
+SUPPORTED_LANGUAGES = ["english", "hindi", "marathi", "tamil", "hinglish"]
+
 # Define Models
 class TextDetectionRequest(BaseModel):
     text: str = Field(..., description="News text to analyze")
@@ -51,9 +54,11 @@ class DetectionResult(BaseModel):
     status: str
     confidence: float
     explanation: str
+    explanation_english: Optional[str] = None
     suspicious_keywords: List[str] = []
     sources: List[str] = []
     timestamp: str
+    detected_language: Optional[str] = None
 
 class VerificationRequest(BaseModel):
     claim: str = Field(..., description="Claim to verify")
@@ -95,18 +100,26 @@ async def save_to_history(analysis_type: str, content_preview: str, result: dict
     return doc["id"]
 
 async def analyze_text_with_llm(text: str) -> dict:
-    """Analyze text using LLM for fake news detection"""
+    """Analyze text using LLM for fake news detection with multilingual support"""
     try:
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=f"text-analysis-{uuid.uuid4()}",
-            system_message="""You are an expert fake news detection AI. Analyze news articles and determine if they are REAL or FAKE.
-            
+            system_message="""You are an expert fake news detection AI that supports multiple languages including English, Hindi, Marathi, Tamil, and Hinglish.
+
+IMPORTANT LANGUAGE RULES:
+1. First detect the language of the input text.
+2. Provide the main explanation in the SAME language as the input.
+3. Always provide an English explanation as well (in the "explanation_english" field).
+4. If the input is already in English, set explanation_english to the same as explanation.
+
 Provide your analysis in this exact JSON format:
 {
     "status": "REAL" or "FAKE",
     "confidence": (number between 0-100),
-    "explanation": "detailed explanation of your reasoning",
+    "detected_language": "english" or "hindi" or "marathi" or "tamil" or "hinglish",
+    "explanation": "detailed explanation in the SAME language as the input text",
+    "explanation_english": "detailed explanation in English",
     "suspicious_keywords": ["list", "of", "suspicious", "words"],
     "credibility_indicators": ["list of credibility factors found or missing"]
 }
@@ -121,7 +134,7 @@ Consider:
         ).with_model("openai", "gpt-5.2")
         
         user_message = UserMessage(
-            text=f"Analyze this news article for authenticity:\n\n{text}"
+            text=f"Analyze this news article for authenticity. Detect its language and respond accordingly:\n\n{text}"
         )
         
         response = await chat.send_message(user_message)
@@ -173,18 +186,26 @@ Look for:
         raise HTTPException(status_code=500, detail=f"Image analysis failed: {str(e)}")
 
 async def verify_claim_with_llm(claim: str) -> dict:
-    """Verify a claim using LLM's knowledge base"""
+    """Verify a claim using LLM's knowledge base with multilingual support"""
     try:
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=f"claim-verification-{uuid.uuid4()}",
-            system_message="""You are a fact-checking AI with access to general world knowledge. Verify claims and provide evidence-based assessments.
-            
+            system_message="""You are a fact-checking AI with access to general world knowledge that supports multiple languages including English, Hindi, Marathi, Tamil, and Hinglish.
+
+IMPORTANT LANGUAGE RULES:
+1. First detect the language of the input claim.
+2. Provide the main explanation in the SAME language as the input.
+3. Always provide an English explanation as well (in the "explanation_english" field).
+4. If the input is already in English, set explanation_english to the same as explanation.
+
 Provide your analysis in this exact JSON format:
 {
     "status": "VERIFIED" or "UNVERIFIED" or "PARTIALLY_VERIFIED",
     "confidence": (number between 0-100),
-    "explanation": "detailed explanation with reasoning",
+    "detected_language": "english" or "hindi" or "marathi" or "tamil" or "hinglish",
+    "explanation": "detailed explanation in the SAME language as the input",
+    "explanation_english": "detailed explanation in English",
     "supporting_facts": ["list of facts that support or contradict the claim"],
     "related_context": "relevant context or background information"
 }
@@ -198,7 +219,7 @@ Base your assessment on:
         ).with_model("openai", "gpt-5.2")
         
         user_message = UserMessage(
-            text=f"Verify this claim based on known facts and general knowledge:\n\n{claim}"
+            text=f"Verify this claim based on known facts. Detect language and respond accordingly:\n\n{claim}"
         )
         
         response = await chat.send_message(user_message)
@@ -272,7 +293,7 @@ async def root():
 
 @api_router.post("/detect-text")
 async def detect_text(request: TextDetectionRequest):
-    """Detect fake news in text using AI"""
+    """Detect fake news in text using AI with multilingual support"""
     try:
         logger.info(f"Analyzing text: {request.text[:100]}...")
         
@@ -282,6 +303,8 @@ async def detect_text(request: TextDetectionRequest):
             "status": result.get("status", "UNKNOWN"),
             "confidence": float(result.get("confidence", 50)),
             "explanation": result.get("explanation", "Analysis completed"),
+            "explanation_english": result.get("explanation_english", result.get("explanation", "")),
+            "detected_language": result.get("detected_language", "english"),
             "suspicious_keywords": result.get("suspicious_keywords", []),
             "sources": result.get("credibility_indicators", []),
             "timestamp": datetime.now(timezone.utc).isoformat()
@@ -462,6 +485,8 @@ async def verify_news(request: VerificationRequest):
             "status": status_map.get(ai_result.get("status", "UNVERIFIED"), "UNCERTAIN"),
             "confidence": float(ai_result.get("confidence", 50)),
             "explanation": ai_result.get("explanation", "Verification completed"),
+            "explanation_english": ai_result.get("explanation_english", ai_result.get("explanation", "")),
+            "detected_language": ai_result.get("detected_language", "english"),
             "suspicious_keywords": ai_result.get("supporting_facts", []),
             "sources": [ai_result.get("related_context", "")],
             "timestamp": datetime.now(timezone.utc).isoformat(),
